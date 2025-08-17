@@ -1,9 +1,13 @@
-# main.py
 import streamlit as st
 import pandas as pd
 import numpy as np
 from typing import Dict, Any, Optional
 import io
+import json
+import openai
+import os
+import json, math, datetime
+
 
 # Import custom modules
 from src.data_analyzer import create_analysis_report, calculate_usability_score
@@ -32,6 +36,75 @@ from src.config import (
     TEXT_CLEANING_OPERATIONS
 )
 
+def json_safe(obj, *, max_rows=200):
+    # primitives
+    if obj is None or isinstance(obj, (bool, int, str)):
+        return obj
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+
+    # pandas
+    if isinstance(obj, pd.DataFrame):
+        df = obj.head(max_rows).copy()
+        for c in df.columns:
+            df[c] = df[c].apply(lambda v: json_safe(v, max_rows=max_rows))
+        return df.to_dict(orient="records")
+    if isinstance(obj, pd.Series):
+        return [json_safe(v, max_rows=max_rows) for v in obj.head(max_rows).tolist()]
+
+    # numpy
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, np.ndarray):
+        return [json_safe(v, max_rows=max_rows) for v in obj.tolist()]
+
+    # datetime-like
+    if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
+        try:
+            return obj.isoformat()
+        except Exception:
+            return str(obj)
+
+    # mappings / sequences
+    if isinstance(obj, dict):
+        return {str(k): json_safe(v, max_rows=max_rows) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [json_safe(v, max_rows=max_rows) for v in obj]
+
+    # fallback (e.g., Streamlit DeltaGenerator)
+    return str(obj)
+
+# ---- GPT call
+def send_json_to_gpt(json_data: dict) -> str:
+    """
+    Send analyzed JSON data to GPT and return the response.
+    Works with openai==0.x style.
+    """
+    try:
+        safe_payload = json_safe(json_data, max_rows=200)
+        user_msg = "Here is the JSON data:\n" + json.dumps(safe_payload, indent=2, ensure_ascii=False)
+
+        resp = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[
+            {"role": "system", "content": """You are given an EDA report as JSON: {EDA_JSON}.
+Write 6–13 bullet points. OUTPUT RULES:
+- Output ONLY bullets; each line must start with "- " and be ONE short sentence.
+- No paragraphs, headings, tables, code blocks, or extra text before/after the bullets.
+- Use only facts found in the JSON; do not invent numbers; round to 1–2 decimals.
+- Mention when available: dataset shape/memory; overall missing % and rows-with-missing %; top 2–3 columns by null % with brief imputation/drop hint; dtype mix (numeric/categorical/datetime); cardinality (flag ID-like unique_ratio ≥0.95 and low-card ≤10 with encoding tips); outliers/skewness and suggested transforms; duplicates; 2–4 strongest absolute correlations and any multicollinearity risk (|corr|>0.8); any quality/usability score and drivers; concrete next-step preprocessing actions.
+- If some sections are absent in the JSON, omit them silently.
+- Keep column lists to at most 3 names per line; keep language concise and actionable."""},
+            {"role": "user", "content": user_msg},
+            ],
+            temperature=0.2,
+        )
+        # old SDK returns dict-like object
+        return resp.choices[0].message["content"]
+    except Exception as e:
+        return f"Error communicating with GPT: {e}"
 
 def main() -> None:
     setup_page_config()
@@ -69,7 +142,7 @@ def main() -> None:
 
 def setup_page_config() -> None:
     st.set_page_config(
-        page_title="CSV Data Analysis & Cleaning Tool",
+        page_title="Byan Data Analysis & Cleaning Tool",
         page_icon="📊",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -84,6 +157,7 @@ def setup_page_config() -> None:
 
 
 def render_sidebar() -> Dict[str, Any]:
+    st.sidebar.image("Byan.png", use_container_width=True)
     st.sidebar.header("📁 File Upload")
     uploaded_file = st.sidebar.file_uploader(
         "Choose a CSV file",
@@ -216,6 +290,11 @@ def render_analysis_tab(df: pd.DataFrame) -> None:
     with st.expander("Full Analysis JSON"):
         st.json(analysis_results)
 
+    if st.button("Send JSON to GPT"):
+        st.info("Sending data to GPT...")
+        gpt_response = send_json_to_gpt(analysis_results)
+        st.subheader("🤖 GPT Response")
+        st.write(gpt_response)
 
 def render_cleaning_tab(df: pd.DataFrame) -> None:
     st.header("Data Cleaning Workshop")
@@ -359,7 +438,6 @@ def handle_file_upload(uploaded_file) -> Optional[pd.DataFrame]:
     except Exception as e:
         st.error(f"Error processing file: {str(e)}")
         return None
-
 
 if __name__ == "__main__":
     main()

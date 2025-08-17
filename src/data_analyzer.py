@@ -1,4 +1,3 @@
-# src/data_analyzer.py
 from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
@@ -209,7 +208,17 @@ class DataAnalyzer:
         return {"usability_score": score,
                 "components": {"missing_pct": miss_pct, "duplicate_pct": dup_pct, "avg_outlier_pct": out_pct}}
 
-    def create_analysis_report(self) -> dict:
+    def calculate_standard_deviation(self) -> dict:
+        numeric_cols = self.df.select_dtypes(include=['int64', 'float64']).columns
+        if len(numeric_cols) == 0:
+            return {"per_column": {}}
+        std_devs = self.df[numeric_cols].std().to_dict()
+        return {"per_column": std_devs}
+
+
+
+    
+    def create_analysis_report(self):
         return {
             "basic_stats": self.calculate_basic_stats(),
             "missing_values": self.analyze_missing_values(),
@@ -221,8 +230,11 @@ class DataAnalyzer:
             "duplicates": self.detect_duplicates(),
             "correlation_matrix": self.calculate_correlation_matrix(),
             "column_statistics": self.generate_column_statistics(),
+            "usability_score": self.calculate_usability_score(),
             "usability": self.calculate_usability_score(),
+            "standard_deviation": self.calculate_standard_deviation()
         }
+
 
 def create_analysis_report(df: pd.DataFrame) -> dict:
     return DataAnalyzer(df).create_analysis_report()

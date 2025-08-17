@@ -30,201 +30,395 @@ warnings.filterwarnings('ignore', category=RuntimeWarning)
 def handle_missing_numeric(df: pd.DataFrame, column: str, method: str, custom_value: Optional[float] = None) -> pd.DataFrame:
     """
     Handle missing values in numeric columns using various imputation methods.
-    
+
     Provides multiple strategies for filling missing numeric values,
     from simple statistical measures to advanced interpolation techniques.
-    
+
     Args:
         df (pd.DataFrame): Input dataframe
         column (str): Name of the numeric column to process
         method (str): Imputation method from MISSING_NUMERIC_METHODS
-                     ('mean', 'median', 'mode', 'forward_fill', 'backward_fill', 
+                     ('mean', 'median', 'mode', 'forward_fill', 'backward_fill',
                       'interpolate', 'constant', 'drop')
         custom_value (Optional[float]): Value to use for 'constant' method
-        
+
     Returns:
         pd.DataFrame: Dataframe with missing values handled in the specified column
-        
+
     Raises:
         ValueError: If method is invalid or column is not numeric
         KeyError: If column doesn't exist
-        
+
     Example:
         >>> df = pd.DataFrame({'A': [1, 2, np.nan, 4]})
         >>> cleaned_df = handle_missing_numeric(df, 'A', 'mean')
         >>> print(cleaned_df['A'].isna().sum())  # 0
-        
-    TODO: Implement numeric missing value handling:
-          - Validate column exists and is numeric
-          - Implement all imputation methods:
-            * mean: Fill with column mean
-            * median: Fill with column median  
-            * mode: Fill with most frequent value
-            * forward_fill: Fill with last valid observation
-            * backward_fill: Fill with next valid observation
-            * interpolate: Linear interpolation between valid values
-            * constant: Fill with custom_value
-            * drop: Remove rows with missing values
-          - Handle edge cases (all missing, single value)
-          - Preserve data types after imputation
     """
-    # TODO: Implement numeric missing value handling
-    pass
+    # Validate if column exists, if not raise an error
+    if column not in df.columns:
+        raise KeyError(f"Column '{column}' does not exist in the dataframe")
+
+    # Validate column is numeric
+    if not pd.api.types.is_numeric_dtype(df[column]):
+        raise ValueError(f"Column '{column}' is not numeric")
+
+    # Validate method
+    if method not in MISSING_NUMERIC_METHODS:
+        raise ValueError(f"Invalid method '{method}'. Must be one of {MISSING_NUMERIC_METHODS}")
+
+    # Create a copy to avoid modifying original dataframe (Good practice as Rakan, Mohammed suggested)
+    df_copy = df.copy()
+
+    # Check if all values are missing
+    if df_copy[column].isna().all():
+        if method in ['mean', 'median', 'mode', 'interpolate']:
+            warnings.warn(f"All values in column '{column}' are missing. Cannot compute {method}.")
+            return df_copy
+        elif method == 'constant' and custom_value is None:
+            raise ValueError("custom_value is required when method is 'constant' and all values are missing")
+
+    # Handle different imputation methods
+    if method == 'mean':
+        fill_value = df_copy[column].mean()
+        df_copy[column] = df_copy[column].fillna(fill_value)
+
+    elif method == 'median':
+        fill_value = df_copy[column].median()
+        df_copy[column] = df_copy[column].fillna(fill_value)
+
+    elif method == 'mode':
+        mode_values = df_copy[column].mode()
+        if len(mode_values) > 0:
+            fill_value = mode_values.iloc[0]
+            df_copy[column] = df_copy[column].fillna(fill_value)
+        else:
+            warnings.warn(f"No mode found for column '{column}'. Values remain unchanged.")
+
+    elif method == 'forward_fill':
+        df_copy[column] = df_copy[column].fillna(method='ffill')
+
+    elif method == 'backward_fill':
+        df_copy[column] = df_copy[column].fillna(method='bfill')
+
+    elif method == 'interpolate':
+        # Only interpolate if there are at least 2 non-null values
+        if df_copy[column].notna().sum() >= 2:
+            df_copy[column] = df_copy[column].interpolate()
+        else:
+            warnings.warn(f"Not enough non-null values in column '{column}' for interpolation. Values remain unchanged.")
+
+    elif method == 'constant':
+        if custom_value is None:
+            raise ValueError("custom_value is required when method is 'constant'")
+        df_copy[column] = df_copy[column].fillna(custom_value)
+
+    elif method == 'drop':
+        df_copy = df_copy.dropna(subset=[column])
+
+    # Preserve original data type
+    original_dtype = df[column].dtype
+    if method != 'drop':  # Don't need to preserve dtype if dropping rows
+        try:
+            df_copy[column] = df_copy[column].astype(original_dtype)
+        except (ValueError, TypeError):
+            # If conversion fails, keep the current dtype
+            warnings.warn(f"Could not preserve original dtype {original_dtype} for column '{column}'")
+
+    return df_copy
 
 
-def handle_missing_categorical(df: pd.DataFrame, column: str, method: str, custom_value: Optional[str] = None) -> pd.DataFrame:
+def handle_missing_categorical(
+        df: pd.DataFrame,
+        column: str,
+        method: str,
+        custom_value: Optional[str] = None
+) -> pd.DataFrame:
     """
     Handle missing values in categorical columns using appropriate methods.
-    
-    Provides strategies for filling missing categorical values that preserve
-    the categorical nature of the data and maintain logical consistency.
-    
-    Args:
-        df (pd.DataFrame): Input dataframe
-        column (str): Name of the categorical column to process
-        method (str): Imputation method from MISSING_CATEGORICAL_METHODS
-                     ('mode', 'constant', 'forward_fill', 'backward_fill', 
-                      'new_category', 'drop')
-        custom_value (Optional[str]): Value to use for 'constant' method
-        
-    Returns:
-        pd.DataFrame: Dataframe with missing values handled in the specified column
-        
-    Raises:
-        ValueError: If method is invalid
-        KeyError: If column doesn't exist
-        
-    Example:
-        >>> df = pd.DataFrame({'B': ['cat', 'dog', np.nan, 'cat']})
-        >>> cleaned_df = handle_missing_categorical(df, 'B', 'mode')
-        >>> print(cleaned_df['B'].isna().sum())  # 0
-        
-    TODO: Implement categorical missing value handling:
-          - Validate column exists
-          - Implement all imputation methods:
-            * mode: Fill with most frequent category
-            * constant: Fill with custom_value or 'Unknown'
-            * forward_fill: Fill with last valid category
-            * backward_fill: Fill with next valid category  
-            * new_category: Create 'Missing' or 'Unknown' category
-            * drop: Remove rows with missing values
-          - Handle edge cases (all missing, single category)
-          - Maintain string data type consistency
+
+    Methods (must be in MISSING_CATEGORICAL_METHODS):
+      'mode'          : Fill with most frequent category (ties resolved by first in .mode()).
+      'constant'      : Fill with custom_value or default 'Unknown'.
+      'forward_fill'  : Fill with last valid category (ffill).
+      'backward_fill' : Fill with next valid category (bfill).
+      'new_category'  : Fill with literal 'Missing' (added to categories if needed).
+      'drop'          : Drop rows where the column is missing.
+
+    Notes:
+      - Preserves pandas Categorical dtype by adding categories before filling.
+      - For all-missing columns, 'mode'/'forward_fill'/'backward_fill' are no-ops with a warning.
+      - For 'constant' and 'new_category', filling proceeds even if all values are missing.
     """
-    # TODO: Implement categorical missing value handling
-    pass
+    # validations
+    if column not in df.columns:
+        raise KeyError(f"Column '{column}' does not exist in the dataframe")
+
+    if method not in MISSING_CATEGORICAL_METHODS:
+        raise ValueError(
+            f"Invalid method '{method}'. Must be one of {MISSING_CATEGORICAL_METHODS}"
+        )
+
+    df_copy = df.copy()
+
+    # helpers to ensure category dtype
+    is_cat = pd.api.types.is_categorical_dtype(df_copy[column])
+
+    def _ensure_category(col: pd.Series, value: Optional[str]) -> pd.Series:
+        if is_cat and value is not None and value not in col.cat.categories:
+            return col.cat.add_categories([value])
+        return col
+
+    # all-missing short-circuits for methods that cannot compute from data
+    if df_copy[column].isna().all():
+        if method in ("mode", "forward_fill", "backward_fill"):
+            warnings.warn(
+                f"All values in column '{column}' are missing. Cannot compute {method}."
+            )
+            return df_copy
+        # 'constant', 'new_category', and 'drop' proceed
+
+    # methods
+    if method == "mode":
+        mode_values = df_copy[column].mode(dropna=True)
+        if len(mode_values) > 0:
+            fill_value = mode_values.iloc[0]
+            df_copy[column] = _ensure_category(df_copy[column], fill_value)
+            df_copy[column] = df_copy[column].fillna(fill_value)
+        else:
+            warnings.warn(f"No mode found for column '{column}'. Values remain unchanged.")
+
+    elif method == "constant":
+        fill_value = "Unknown" if custom_value is None else custom_value
+        df_copy[column] = _ensure_category(df_copy[column], fill_value)
+        df_copy[column] = df_copy[column].fillna(fill_value)
+
+    elif method == "forward_fill":
+        df_copy[column] = df_copy[column].ffill()
+
+    elif method == "backward_fill":
+        df_copy[column] = df_copy[column].bfill()
+
+    elif method == "new_category":
+        fill_value = "Missing"
+        df_copy[column] = _ensure_category(df_copy[column], fill_value)
+        df_copy[column] = df_copy[column].fillna(fill_value)
+
+    elif method == "drop":
+        df_copy = df_copy.dropna(subset=[column])
+
+    # edge notification for ffill/bfill when leading/trailing NaNs remain
+    if method in ("forward_fill", "backward_fill") and df_copy[column].isna().any():
+        warnings.warn(
+            f"Some missing values in column '{column}' could not be filled using {method}."
+        )
+
+    return df_copy
+
 
 
 def remove_outliers_iqr(df: pd.DataFrame, column: str, multiplier: float = 1.5) -> pd.DataFrame:
     """
-    Remove outliers from numeric column using Interquartile Range method.
-    
-    Removes rows where the specified column value falls outside the
-    IQR-based outlier boundaries (Q1 - multiplier*IQR, Q3 + multiplier*IQR).
-    
+    Remove outliers from a numeric column using the IQR method.
+    Refer to https://medium.com/@pp1222001/outlier-detection-and-removal-using-the-iqr-method-6fab2954315d
+    Notes:
+      - Rows with NaN in `column` are retained (they are not treated as outliers).
+      - If IQR is 0 or undefined (e.g., constant/empty after dropna), the input is returned unchanged.
+    """
+    #TODO Test this function with a variety of dataframes, including edge cases.
+
+    # validations
+    if column not in df.columns:
+        raise KeyError(f"Column '{column}' does not exist in the dataframe")
+
+    if not pd.api.types.is_numeric_dtype(df[column]):
+        raise ValueError(f"Column '{column}' must be numeric")
+
+    if not np.isfinite(multiplier) or multiplier <= 0:
+        raise ValueError("`multiplier` must be a positive, finite number")
+
+    s = df[column] # Series to process
+    non_null = s.dropna()
+    if non_null.empty:
+        warnings.warn(f"Column '{column}' contains only missing values; nothing to remove.")
+        return df.copy()
+
+    # IQR computation
+    q1, q3 = non_null.quantile([0.25, 0.75])
+    iqr = q3 - q1
+
+    if pd.isna(iqr) or iqr == 0:
+        warnings.warn(f"IQR is zero/undefined for column '{column}'; no outliers detected.")
+        return df.copy()
+
+    lo = q1 - multiplier * iqr
+    hi = q3 + multiplier * iqr
+
+    # Keep values within [lo, hi]; keep NaNs as-is
+    in_range_or_nan = s.isna() | ((s >= lo) & (s <= hi))  # NaNs are always kept, s <= lo and s >= hi are outliers.
+    result = df.loc[in_range_or_nan].copy()
+
+    # Edge-case notifications (non-fatal)
+    removed = len(df) - len(result)
+    if removed == 0:
+        # optional: no warning needed, but helpful in pipelines..
+        warnings.warn(f"No outliers removed from column '{column}' (multiplier={multiplier}).")
+    elif len(result) == 0:
+        warnings.warn(f"All rows considered outliers in column '{column}'. Returning empty DataFrame.")
+
+    return result
+
+def cap_outliers(
+        df: pd.DataFrame,
+        column: str,
+        lower_percentile: float = 0.01,
+        upper_percentile: float = 0.99
+) -> pd.DataFrame:
+    """
+    Cap extreme values in a numeric column at specified percentile boundaries.
+
+    Keeps all rows while reducing the influence of extreme values by clipping
+    them to the chosen lower / upper percentile cutoffs.
+
     Args:
-        df (pd.DataFrame): Input dataframe
-        column (str): Name of the numeric column to process
-        multiplier (float): IQR multiplier for outlier detection (default: 1.5)
-        
+        df (pd.DataFrame): Input DataFrame.
+        column (str): Numeric column to process.
+        lower_percentile (float): Lower percentile in (0,1). Default 0.01.
+        upper_percentile (float): Upper percentile in (0,1). Default 0.99.
+
     Returns:
-        pd.DataFrame: Dataframe with outlier rows removed
-        
+        pd.DataFrame: Copy of DataFrame with capped column.
+
     Raises:
-        ValueError: If column is not numeric or multiplier is invalid
-        KeyError: If column doesn't exist
-        
-    Example:
-        >>> df = pd.DataFrame({'A': [1, 2, 3, 100, 4, 5]})
-        >>> cleaned_df = remove_outliers_iqr(df, 'A')
-        >>> print(len(cleaned_df))  # Should be less than original
-        
-    TODO: Implement IQR outlier removal:
-          - Validate column exists and is numeric
-          - Calculate Q1, Q3, and IQR
-          - Determine outlier boundaries using multiplier
-          - Filter dataframe to remove outlier rows
-          - Handle edge cases (all outliers, no outliers)
-          - Preserve row indices appropriately
+        KeyError: If column not found.
+        ValueError: On invalid dtype or percentile parameters.
     """
-    # TODO: Implement IQR outlier removal
-    pass
+    # Column existence
+    if column not in df.columns:
+        raise KeyError(f"Column '{column}' does not exist in the dataframe")
+
+    # Numeric dtype check
+    if not pd.api.types.is_numeric_dtype(df[column]):
+        raise ValueError(f"Column '{column}' must be numeric")
+
+    # Percentile parameter validation
+    for name, p in (("lower_percentile", lower_percentile), ("upper_percentile", upper_percentile)):
+        if not isinstance(p, (int, float)) or not np.isfinite(p):
+            raise ValueError(f"{name} must be a finite number")
+        if p <= 0 or p >= 1:
+            raise ValueError(f"{name} must be within the open interval (0,1)")
+
+    if lower_percentile >= upper_percentile:
+        raise ValueError("lower_percentile must be < upper_percentile")
+
+    s = df[column]
+    non_null = s.dropna()
+
+    # All missing -> nothing to do
+    if non_null.empty:
+        warnings.warn(f"Column '{column}' contains only missing values; no capping applied.")
+        return df.copy()
+
+    # Compute bounds
+    lower_bound = non_null.quantile(lower_percentile)
+    upper_bound = non_null.quantile(upper_percentile)
+
+    # Constant / degenerate
+    if pd.isna(lower_bound) or pd.isna(upper_bound):
+        warnings.warn(f"Percentile bounds undefined for column '{column}'; no capping applied.")
+        return df.copy()
+    if lower_bound == upper_bound:
+        warnings.warn(f"Column '{column}' appears constant at value {lower_bound}; no capping needed.")
+        return df.copy()
+
+    df_copy = df.copy()
+    col = df_copy[column]
+
+    # Identify values to cap (exclude NaNs)
+    mask_low = col < lower_bound
+    mask_high = col > upper_bound
+    n_low = int(mask_low.sum())
+    n_high = int(mask_high.sum())
+    total_capped = n_low + n_high
+
+    if total_capped == 0:
+        # No change but still return a copy for consistency
+        return df_copy
+
+    # Apply clipping (preserves NaNs)
+    df_copy[column] = col.clip(lower=lower_bound, upper=upper_bound)
+
+    # Attempt to preserve original dtype
+    orig_dtype = df[column].dtype
+    try:
+        # If original was an integer dtype but NaNs exist, casting will fail; ignore gracefully
+        df_copy[column] = df_copy[column].astype(orig_dtype)
+    except (ValueError, TypeError):
+        # Keep clipped dtype (likely float) if safe cast not possible
+        pass
+
+    warnings.warn(
+        f"Capped {total_capped} value(s) in column '{column}' "
+        f"(lower: {n_low}, upper: {n_high}) at "
+        f"[{lower_bound:.6g}, {upper_bound:.6g}] "
+        f"(p={lower_percentile}, {upper_percentile})."
+    )
+
+    return df_copy
 
 
-def cap_outliers(df: pd.DataFrame, column: str, lower_percentile: float = 0.01, upper_percentile: float = 0.99) -> pd.DataFrame:
+def remove_duplicates(
+        df: pd.DataFrame,
+        subset: Optional[List[str]] = None,
+        keep: Union[str, bool] = "first"
+) -> pd.DataFrame:
     """
-    Cap outliers by replacing extreme values with percentile boundaries.
-    
-    Instead of removing outliers, caps them at specified percentile
-    boundaries to preserve all rows while reducing outlier impact.
-    
+    Remove duplicate rows.
     Args:
-        df (pd.DataFrame): Input dataframe
-        column (str): Name of the numeric column to process
-        lower_percentile (float): Lower boundary percentile (default: 0.01)
-        upper_percentile (float): Upper boundary percentile (default: 0.99)
-        
-    Returns:
-        pd.DataFrame: Dataframe with outliers capped at percentile boundaries
-        
-    Raises:
-        ValueError: If percentiles are invalid (not between 0-1 or lower >= upper)
-        KeyError: If column doesn't exist
-        
-    Example:
-        >>> df = pd.DataFrame({'A': [1, 2, 3, 100, 4, 5]})
-        >>> cleaned_df = cap_outliers(df, 'A', 0.05, 0.95)
-        >>> print(cleaned_df['A'].max())  # Capped at 95th percentile
-        
-    TODO: Implement outlier capping:
-          - Validate column exists and is numeric
-          - Validate percentile parameters
-          - Calculate percentile boundaries
-          - Cap values outside boundaries
-          - Preserve original data types
-          - Handle edge cases (constant values)
-    """
-    # TODO: Implement outlier capping
-    pass
+        df (pd.DataFrame): Input DataFrame.
+        subset (Optional[List[str]]): Columns to consider for identifying duplicates.
+                                      If None, all columns are used.
+        keep (str | bool): Which duplicates to keep:
+            'first' (default): Keep first occurrence.
+            'last' : Keep last occurrence.
+            False  : Drop all duplicates.
 
-
-def remove_duplicates(df: pd.DataFrame, subset: Optional[List[str]] = None, keep: str = 'first') -> pd.DataFrame:
-    """
-    Remove duplicate rows from the dataframe.
-    
-    Identifies and removes duplicate rows either across all columns
-    or based on a subset of columns, with options for which duplicates to keep.
-    
-    Args:
-        df (pd.DataFrame): Input dataframe
-        subset (Optional[List[str]]): Columns to consider for duplication
-                                    (None = all columns)
-        keep (str): Which duplicates to keep ('first', 'last', 'none')
-                   - 'first': Keep first occurrence
-                   - 'last': Keep last occurrence  
-                   - 'none': Remove all duplicates
-        
     Returns:
-        pd.DataFrame: Dataframe with duplicates removed
-        
+        pd.DataFrame: Copy without (selected) duplicate rows.
+
     Raises:
-        ValueError: If keep parameter is invalid
-        KeyError: If subset columns don't exist
-        
-    Example:
-        >>> df = pd.DataFrame({'A': [1, 2, 1], 'B': [1, 2, 1]})
-        >>> cleaned_df = remove_duplicates(df, keep='first')
-        >>> print(len(cleaned_df))  # 2 (one duplicate removed)
-        
-    TODO: Implement duplicate removal:
-          - Validate subset columns exist if provided
-          - Validate keep parameter
-          - Use pandas drop_duplicates with appropriate parameters
-          - Handle edge cases (all duplicates, no duplicates)
-          - Preserve index appropriately based on keep strategy
+        KeyError: If any column in subset does not exist.
+        ValueError: If keep is invalid.
+        TypeError: If subset is not a sequence of strings.
+
+    Notes:
+        - Original DataFrame is never mutated.
+        - If no duplicates are found, a copy is still returned.
     """
-    # TODO: Implement duplicate removal
-    pass
+    # Validate keep
+    if keep not in ("first", "last", False):
+        raise ValueError("keep must be one of {'first','last', False}")
+
+    # Validate subset
+    if subset is not None:
+        if not isinstance(subset, (list, tuple)):
+            raise TypeError("subset must be a list or tuple of column names")
+        missing = [c for c in subset if c not in df.columns]
+        if missing:
+            raise KeyError(f"Columns not found in DataFrame: {missing}")
+
+    df_copy = df.copy()
+
+    before = len(df_copy)
+    result = df_copy.drop_duplicates(subset=subset, keep=keep)
+    removed = before - len(result)
+
+    if removed == 0:
+        warnings.warn("No duplicate rows removed.")
+    else:
+        cols_repr = subset if subset is not None else "all columns"
+        warnings.warn(f"Removed {removed} duplicate row(s) based on {cols_repr} (keep={keep}).")
+
+    return result
 
 
 def optimize_dtypes(df: pd.DataFrame) -> pd.DataFrame:

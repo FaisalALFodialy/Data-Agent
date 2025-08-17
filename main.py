@@ -227,7 +227,7 @@ def render_analysis_tab(df: pd.DataFrame) -> None:
 
     st.subheader("📋 Detailed Analysis")
 
-    with st.expander("Missing Values Analysis", expanded=True):
+    with st.expander("Missing Values Analysis", expanded=False):
         if analysis_results['missing_values']['total_missing'] > 0:
             fig_missing = plot_missing_values_heatmap(df)
             st.plotly_chart(fig_missing, use_container_width=True)
@@ -236,7 +236,7 @@ def render_analysis_tab(df: pd.DataFrame) -> None:
             st.success("No missing values found!")
 
     # 🔹 Standard Deviation Section (right after Missing Values Analysis)
-    with st.expander("Standard Deviation (Numeric Columns)", expanded=True):
+    with st.expander("Standard Deviation (Numeric Columns)", expanded=False):
         # Pull from the analysis report
         std_info = analysis_results.get("standard_deviation", {})
         per_col = std_info.get("per_column", {})
@@ -441,3 +441,4 @@ def handle_file_upload(uploaded_file) -> Optional[pd.DataFrame]:
 
 if __name__ == "__main__":
     main()
+

@@ -49,11 +49,9 @@ def main() -> None:
         if key not in st.session_state:
             st.session_state[key] = default
 
-    # ---- sidebar & upload ----
     sidebar_data = render_sidebar()
     uploaded_df = handle_file_upload(sidebar_data['uploaded_file'])
 
-    # ---- content ----
     if uploaded_df is not None:
         tab1, tab2, tab3 = st.tabs(["Data Analysis", "Data Cleaning", "Export"])
 
@@ -163,6 +161,32 @@ def render_analysis_tab(df: pd.DataFrame) -> None:
         else:
             st.success("No missing values found!")
 
+    # 🔹 Standard Deviation Section (right after Missing Values Analysis)
+    with st.expander("Standard Deviation (Numeric Columns)", expanded=True):
+        # Pull from the analysis report
+        std_info = analysis_results.get("standard_deviation", {})
+        per_col = std_info.get("per_column", {})
+
+        if per_col:
+            std_df = pd.DataFrame(
+                {"Column": list(per_col.keys()), "Standard Deviation": list(per_col.values())}
+            ).sort_values("Standard Deviation", ascending=False, ignore_index=True)
+
+            st.dataframe(std_df, use_container_width=True)
+
+            # Optional bar chart (requires plotly installed)
+            try:
+                import plotly.express as px
+                fig_std = px.bar(
+                    std_df, x="Column", y="Standard Deviation",
+                    title="Standard Deviation per Numeric Column", text="Standard Deviation"
+                )
+                st.plotly_chart(fig_std, use_container_width=True)
+            except Exception:
+                st.info("Plotly not installed — showing table only.")
+        else:
+            st.info("No numeric columns available for standard deviation analysis.")      
+ 
     with st.expander("Data Types and Statistics"):
         st.dataframe(analysis_results['data_types'], use_container_width=True)
         colstats = analysis_results['column_statistics'].copy()
@@ -171,7 +195,6 @@ def render_analysis_tab(df: pd.DataFrame) -> None:
                 lambda v: ", ".join(map(str, v)) if isinstance(v, (list, tuple)) else str(v)
             )
 
-        # Optional: ensure datetime-like min/max render safely
         for c in ("min", "max"):
             if c in colstats.columns:
                 colstats[c] = colstats[c].apply(

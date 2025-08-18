@@ -314,8 +314,7 @@ def plot_distribution(df: pd.DataFrame, column: str, plot_type: str = 'histogram
                     y=value_counts.values,
                     title=f"Distribution of {column}"
                 )
-                fig.update_xaxis(title=column)
-                fig.update_yaxis(title="Count")
+                fig.update_layout(xaxis_title=column, yaxis_title="Count")
         
         elif plot_type == 'box':
             if pd.api.types.is_numeric_dtype(col_data):
@@ -475,7 +474,7 @@ def plot_cardinality_bar(cardinality_data: Dict[str, int]) -> go.Figure:
         
         # Rotate x-axis labels if many columns
         if len(columns) > 10:
-            fig.update_xaxis(tickangle=45)
+            fig.update_layout(xaxis_tickangle=45)
         
         return fig
         

@@ -717,7 +717,7 @@ def render_statistics_analysis(df: pd.DataFrame, analysis_results: Dict) -> None
                     std_df, x="Column", y="Standard Deviation",
                     title="Standard Deviation per Numeric Column"
                 )
-                fig_std.update_xaxis(tickangle=45)
+                fig_std.update_layout(xaxis_tickangle=45)
                 st.plotly_chart(fig_std, use_container_width=True, key="analysis_tab_statistics")
             except Exception as e:
                 st.info(f"Chart not available: {str(e)}")
@@ -818,15 +818,31 @@ def render_raw_analysis_results(analysis_results: Dict) -> None:
     
     # GPT Analysis Section
     st.subheader("🤖 AI-Powered Insights")
+    
+    # Initialize GPT response in session state
+    if 'gpt_analysis_response' not in st.session_state:
+        st.session_state.gpt_analysis_response = None
+    
     if st.button("Get GPT-4 Analysis", key="raw_analysis_gpt"):
         with st.spinner("Analyzing data with GPT-4..."):
             try:
                 gpt_response = send_json_to_gpt(analysis_results)
-                st.markdown("**GPT-4 Analysis:**")
-                st.write(gpt_response)
+                st.session_state.gpt_analysis_response = gpt_response
             except Exception as e:
-                st.error(f"Failed to get GPT analysis: {str(e)}")
-                st.info("Make sure OpenAI API key is configured correctly.")
+                st.session_state.gpt_analysis_response = f"Error: {str(e)}"
+    
+    # Display stored GPT response if available
+    if st.session_state.gpt_analysis_response:
+        st.markdown("**GPT-4 Analysis:**")
+        if st.session_state.gpt_analysis_response.startswith("Error:"):
+            st.error(st.session_state.gpt_analysis_response)
+            st.info("Make sure OpenAI API key is configured correctly.")
+        else:
+            st.write(st.session_state.gpt_analysis_response)
+        
+        # Add button to clear the analysis
+        if st.button("Clear Analysis", key="clear_gpt_analysis"):
+            st.session_state.gpt_analysis_response = None
     
     # Raw JSON data
     if st.session_state.advanced_mode:

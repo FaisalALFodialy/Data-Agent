@@ -7,7 +7,7 @@ settings for the CSV Data Analysis and Cleaning Tool.
 """
 
 from typing import List, Dict, Any
-import os
+# Configuration constants for the data cleaning application
 
 # FILE HANDLING CONFIGURATION
 
@@ -300,24 +300,57 @@ def validate_config() -> bool:
     
     Returns:
         bool: True if configuration is valid, False otherwise
-        
-    TODO: Implement configuration validation:
-          - Check that weights sum to 1.0
-          - Validate threshold ranges (0-1)
-          - Ensure required keys exist
-          - Check file paths and permissions
     """
-    # Validate usability score weights sum to 1.0
-    weights_sum = sum(USABILITY_SCORE_WEIGHTS.values())
-    if abs(weights_sum - 1.0) > 0.001:
+    try:
+        # Validate usability score weights sum to 1.0
+        weights_sum = sum(USABILITY_SCORE_WEIGHTS.values())
+        if abs(weights_sum - 1.0) > 0.001:
+            print(f"Warning: Usability score weights sum to {weights_sum:.3f}, expected 1.0")
+            return False
+        
+        # Validate threshold ranges (0-1)
+        thresholds = [MISSING_VALUE_THRESHOLD, HIGH_CARDINALITY_THRESHOLD, LOW_CARDINALITY_THRESHOLD]
+        if not all(0.0 <= t <= 1.0 for t in thresholds):
+            print("Warning: Some thresholds are outside valid range [0.0, 1.0]")
+            return False
+        
+        # Validate file size limit is positive
+        if MAX_FILE_SIZE <= 0:
+            print("Warning: MAX_FILE_SIZE must be positive")
+            return False
+        
+        # Validate IQR multiplier is positive
+        if OUTLIER_IQR_MULTIPLIER <= 0:
+            print("Warning: OUTLIER_IQR_MULTIPLIER must be positive")
+            return False
+        
+        # Validate that required list configurations exist and are non-empty
+        required_lists = [
+            ('UPLOAD_FILE_TYPES', UPLOAD_FILE_TYPES),
+            ('MISSING_NUMERIC_METHODS', MISSING_NUMERIC_METHODS),
+            ('MISSING_CATEGORICAL_METHODS', MISSING_CATEGORICAL_METHODS),
+            ('TEXT_CLEANING_OPERATIONS', TEXT_CLEANING_OPERATIONS),
+        ]
+        
+        for name, config_list in required_lists:
+            if not isinstance(config_list, list) or len(config_list) == 0:
+                print(f"Warning: {name} must be a non-empty list")
+                return False
+        
+        # Validate usability score grades have valid ranges
+        for grade, info in USABILITY_SCORE_GRADES.items():
+            if not isinstance(info, dict) or 'min' not in info or 'max' not in info:
+                print(f"Warning: Grade {grade} must have 'min' and 'max' values")
+                return False
+            if info['min'] > info['max']:
+                print(f"Warning: Grade {grade} min value greater than max value")
+                return False
+        
+        return True
+        
+    except Exception as e:
+        print(f"Configuration validation error: {e}")
         return False
-    
-    # Validate threshold ranges
-    thresholds = [MISSING_VALUE_THRESHOLD, HIGH_CARDINALITY_THRESHOLD, LOW_CARDINALITY_THRESHOLD]
-    if not all(0.0 <= t <= 1.0 for t in thresholds):
-        return False
-    
-    return True
 
 
 # Configuration validation on import

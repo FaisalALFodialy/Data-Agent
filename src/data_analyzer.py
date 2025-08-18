@@ -1,4 +1,3 @@
-from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
@@ -240,5 +239,20 @@ def create_analysis_report(df: pd.DataFrame) -> dict:
     return DataAnalyzer(df).create_analysis_report()
 
 def calculate_usability_score(analysis_report: dict) -> dict:
-    score = analysis_report["usability"]["usability_score"]
-    return {"overall_score": int(score)}
+    """Calculate usability score from analysis report."""
+    try:
+        if "usability" in analysis_report:
+            usability_data = analysis_report["usability"]
+            score = usability_data.get("usability_score", 0)
+            components = usability_data.get("components", {})
+            
+            return {
+                "overall_score": int(score),
+                "components": components,
+                "grade": "A" if score >= 90 else "B" if score >= 80 else "C" if score >= 70 else "D" if score >= 60 else "F",
+                "grade_description": "Excellent" if score >= 90 else "Good" if score >= 80 else "Fair" if score >= 70 else "Poor" if score >= 60 else "Failing"
+            }
+        else:
+            return {"overall_score": 0, "components": {}, "grade": "F", "grade_description": "No usability data available"}
+    except Exception as e:
+        return {"overall_score": 0, "components": {}, "grade": "F", "grade_description": f"Error: {str(e)}"}

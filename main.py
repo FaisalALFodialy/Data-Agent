@@ -54,7 +54,7 @@ def main() -> None:
             render_data_preview()
             
             # Main tabs with state persistence
-            tab_names = ["📊 Analysis", "🧹 Cleaning", "📈 Visualizations", "📤 Export"]
+            tab_names = ["📊 Analysis", "🧹 Cleaning", "📈 Visualizations", "📤 Export","📲 QR Code"]
             
             # Use session state to track active tab
             selected_tab = st.selectbox(
@@ -80,6 +80,9 @@ def main() -> None:
                 render_visualization_tab()
             elif selected_tab == "📤 Export":
                 render_export_tab()
+            elif selected_tab == "📲 QR Code":
+                st.title("📲 Access Byan via QR Code")
+                st.image("Byan-qr.png", use_container_width=True)
                 
         else:
             render_welcome_screen()
@@ -94,3 +97,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

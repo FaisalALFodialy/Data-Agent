@@ -126,7 +126,7 @@ def main() -> None:
     uploaded_df = handle_file_upload(sidebar_data['uploaded_file'])
 
     if uploaded_df is not None:
-        tab1, tab2, tab3 = st.tabs(["Data Analysis", "Data Cleaning", "Export"])
+        tab1, tab2, tab3, tab4 = st.tabs(["Data Analysis", "Data Cleaning", "Export", "QR Code"])
 
         with tab1:
             render_analysis_tab(uploaded_df)
@@ -136,6 +136,11 @@ def main() -> None:
 
         with tab3:
             render_export_tab(uploaded_df)
+
+        with tab4:
+            st.title("📲 Access Byan via QR Code")
+            st.image("Byan-qr.png", use_container_width=True)
+
     else:
         st.info("Please upload a CSV file to begin analysis")
 
@@ -153,7 +158,7 @@ def setup_page_config() -> None:
     .metric-card { background-color: #f0f2f6; padding: 1rem; border-radius: 0.5rem; margin: 0.5rem 0; }
     </style>
     """, unsafe_allow_html=True)
-    st.markdown('<div class="main-header">CSV Data Analysis & Cleaning Tool</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-header">Byan Data Analysis & Cleaning Tool</div>', unsafe_allow_html=True)
 
 
 def render_sidebar() -> Dict[str, Any]:
@@ -261,7 +266,7 @@ def render_analysis_tab(df: pd.DataFrame) -> None:
         else:
             st.info("No numeric columns available for standard deviation analysis.")      
  
-    with st.expander("Data Types and Statistics"):
+    with st.expander("Data Types and Statistics", expanded=False):
         st.dataframe(analysis_results['data_types'], use_container_width=True)
         colstats = analysis_results['column_statistics'].copy()
         if 'example_values' in colstats.columns:
@@ -278,7 +283,7 @@ def render_analysis_tab(df: pd.DataFrame) -> None:
         st.dataframe(colstats, use_container_width=True)
         st.dataframe(analysis_results['column_statistics'], use_container_width=True)
 
-    with st.expander("Correlation Analysis"):
+    with st.expander("Correlation Analysis",expanded=False):
         numeric_df = df.select_dtypes(include=[np.number])
         if len(numeric_df.columns) > 1:
             corr_matrix = numeric_df.corr(numeric_only=True)
@@ -287,10 +292,10 @@ def render_analysis_tab(df: pd.DataFrame) -> None:
         else:
             st.info("Not enough numeric columns for correlation analysis")
 
-    with st.expander("Full Analysis JSON"):
+    with st.expander("Full Analysis JSON",expanded=False):
         st.json(analysis_results)
 
-    if st.button("Send JSON to GPT"):
+    if st.button("Analyse JSON to GPT"):
         st.info("Sending data to GPT...")
         gpt_response = send_json_to_gpt(analysis_results)
         st.subheader("🤖 GPT Response")
@@ -441,4 +446,5 @@ def handle_file_upload(uploaded_file) -> Optional[pd.DataFrame]:
 
 if __name__ == "__main__":
     main()
+
 

@@ -44,12 +44,22 @@ def extract_real_data_for_dashboard(analysis_results: Dict[str, Any]) -> Dict[st
     outliers_df = analysis_results.get('outliers_iqr', pd.DataFrame())
     if hasattr(outliers_df, 'iterrows') and not outliers_df.empty:
         outlier_counts = {}
+        outlier_details = {}
         for _, row in outliers_df.iterrows():
             if 'column' in row and 'outliers_iqr' in row:
-                outlier_counts[row['column']] = int(row['outliers_iqr'])
+                col_name = row['column']
+                outlier_counts[col_name] = int(row['outliers_iqr'])
+                # Store additional details for validation
+                outlier_details[col_name] = {
+                    'count': int(row['outliers_iqr']),
+                    'percentage': float(row['outliers_iqr_pct']) if 'outliers_iqr_pct' in row else 0.0,
+                    'values': row.get('outlier_values', [])
+                }
         dashboard_data['outlier_counts'] = outlier_counts
+        dashboard_data['outlier_details'] = outlier_details
     else:
         dashboard_data['outlier_counts'] = {}
+        dashboard_data['outlier_details'] = {}
     
     # Extract usability score
     usability = analysis_results.get('usability', {})

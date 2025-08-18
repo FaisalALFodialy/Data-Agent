@@ -9,11 +9,9 @@ outlier handling, duplicate removal, and data optimization operations.
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Any, List, Optional, Union, Tuple
+from typing import Dict, Any, List, Optional, Union
 import re
 import warnings
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
 
 from .config import (
     MISSING_NUMERIC_METHODS,
@@ -224,7 +222,6 @@ def remove_outliers_iqr(df: pd.DataFrame, column: str, multiplier: float = 1.5) 
       - Rows with NaN in `column` are retained (they are not treated as outliers).
       - If IQR is 0 or undefined (e.g., constant/empty after dropna), the input is returned unchanged.
     """
-    #TODO Test this function with a variety of dataframes, including edge cases.
 
     # validations
     if column not in df.columns:
@@ -439,17 +436,187 @@ def optimize_dtypes(df: pd.DataFrame) -> pd.DataFrame:
         >>> optimized_df = optimize_dtypes(df)
         >>> print(optimized_df.dtypes)  # Shows optimized types
         
-    TODO: Implement data type optimization:
-          - Analyze numeric columns for int8, int16, int32 opportunities
-          - Convert float64 to float32 where precision allows
-          - Convert low-cardinality strings to categorical
-          - Detect and convert datetime strings
-          - Calculate memory savings achieved
-          - Handle edge cases (mixed types, special values)
-          - Preserve data integrity during conversion
     """
-    # TODO: Implement data type optimization
-    pass
+    df_optimized = df.copy()
+    original_memory = df.memory_usage(deep=True).sum()
+    
+    for column in df_optimized.columns:
+        col_data = df_optimized[column]
+        
+        # Skip if column is all null
+        if col_data.isna().all():
+            continue
+            
+        # Handle numeric columns
+        if pd.api.types.is_numeric_dtype(col_data):
+            # Integer optimization
+            if pd.api.types.is_integer_dtype(col_data):
+                col_min, col_max = col_data.min(), col_data.max()
+                
+                # Try int8 (-128 to 127)
+                if col_min >= -128 and col_max <= 127:
+                    df_optimized[column] = col_data.astype('int8')
+                # Try int16 (-32,768 to 32,767)
+                elif col_min >= -32768 and col_max <= 32767:
+                    df_optimized[column] = col_data.astype('int16')
+                # Try int32 (-2,147,483,648 to 2,147,483,647)
+                elif col_min >= -2147483648 and col_max <= 2147483647:
+                    df_optimized[column] = col_data.astype('int32')
+                # Keep as int64
+                else:
+                    df_optimized[column] = col_data.astype('int64')
+                    
+            # Float optimization
+            elif pd.api.types.is_float_dtype(col_data):
+                # Try float32 if precision allows
+                try:
+                    col_float32 = col_data.astype('float32')
+                    # Check if conversion is lossless (within reasonable tolerance)
+                    if np.allclose(col_data.dropna(), col_float32.dropna(), rtol=1e-6, atol=1e-6, equal_nan=True):
+                        df_optimized[column] = col_float32
+                    else:
+                        df_optimized[column] = col_data.astype('float64')
+                except (ValueError, OverflowError):
+                    df_optimized[column] = col_data.astype('float64')
+        
+        # Handle object columns
+        elif col_data.dtype == 'object':
+            # Check for datetime patterns
+            if _is_datetime_like(col_data):
+                try:
+                    df_optimized[column] = pd.to_datetime(col_data, errors='coerce')
+                    continue
+                except (ValueError, TypeError):
+                    pass
+            
+            # Check for numeric strings
+            if _is_numeric_string(col_data):
+                try:
+                    # Try integer first
+                    numeric_converted = pd.to_numeric(col_data, errors='coerce')
+                    if numeric_converted.notna().all() or col_data.isna().sum() == numeric_converted.isna().sum():
+                        if (numeric_converted == numeric_converted.astype('int64')).all():
+                            df_optimized[column] = numeric_converted.astype('int64')
+                        else:
+                            df_optimized[column] = numeric_converted
+                        continue
+                except (ValueError, TypeError):
+                    pass
+            
+            # Check for categorical optimization (low cardinality)
+            unique_count = col_data.nunique()
+            total_count = len(col_data)
+            cardinality_ratio = unique_count / total_count if total_count > 0 else 0
+            
+            # Convert to categorical if cardinality is low (< 5% unique values or < 50 unique values)
+            if cardinality_ratio < 0.05 or unique_count < 50:
+                df_optimized[column] = col_data.astype('category')
+    
+    optimized_memory = df_optimized.memory_usage(deep=True).sum()
+    memory_saved = original_memory - optimized_memory
+    savings_percentage = (memory_saved / original_memory) * 100 if original_memory > 0 else 0
+    
+    # Add optimization metadata
+    if hasattr(df_optimized, 'attrs'):
+        df_optimized.attrs['optimization_info'] = {
+            'original_memory': original_memory,
+            'optimized_memory': optimized_memory,
+            'memory_saved': memory_saved,
+            'savings_percentage': savings_percentage
+        }
+    
+    return df_optimized
+
+
+def _is_numeric_string(series: pd.Series) -> bool:
+    """Helper function to check if object series contains numeric strings."""
+    try:
+        sample = series.dropna().head(100)
+        if len(sample) == 0:
+            return False
+        pd.to_numeric(sample, errors='raise')
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _is_datetime_like(series: pd.Series) -> bool:
+    """Helper function to check if object series contains datetime strings."""
+    try:
+        sample = series.dropna().head(100)
+        if len(sample) == 0:
+            return False
+        
+        # Try to parse as datetime
+        pd.to_datetime(sample, errors='raise')
+        return True
+    except (ValueError, TypeError):
+        # Try with common datetime patterns
+        datetime_patterns = [
+            r'^\d{4}-\d{2}-\d{2}',  # YYYY-MM-DD
+            r'^\d{2}/\d{2}/\d{4}',  # MM/DD/YYYY
+            r'^\d{2}-\d{2}-\d{4}',  # MM-DD-YYYY
+        ]
+        
+        matches = 0
+        for value in sample:
+            if isinstance(value, str):
+                for pattern in datetime_patterns:
+                    if re.match(pattern, value.strip()):
+                        matches += 1
+                        break
+        
+        return matches / len(sample) > 0.8
+
+
+def _is_datetime_like(series: pd.Series) -> bool:
+    """Check if a series contains datetime-like strings."""
+    if series.dtype != 'object':
+        return False
+    
+    # Sample non-null values
+    sample = series.dropna().head(100)
+    if len(sample) == 0:
+        return False
+    
+    # Common datetime patterns
+    datetime_patterns = [
+        r'^\d{4}-\d{2}-\d{2}',  # YYYY-MM-DD
+        r'^\d{2}/\d{2}/\d{4}',  # MM/DD/YYYY
+        r'^\d{2}-\d{2}-\d{4}',  # MM-DD-YYYY
+        r'^\d{4}/\d{2}/\d{2}',  # YYYY/MM/DD
+    ]
+    
+    matches = 0
+    for value in sample:
+        if isinstance(value, str):
+            for pattern in datetime_patterns:
+                if re.match(pattern, value.strip()):
+                    matches += 1
+                    break
+    
+    # If more than 80% match datetime patterns
+    return matches / len(sample) > 0.8
+
+
+def _is_numeric_string(series: pd.Series) -> bool:
+    """Check if a series contains numeric strings."""
+    if series.dtype != 'object':
+        return False
+    
+    # Sample non-null values
+    sample = series.dropna().head(100)
+    if len(sample) == 0:
+        return False
+    
+    # Try to convert to numeric
+    try:
+        numeric_converted = pd.to_numeric(sample, errors='coerce')
+        valid_conversions = numeric_converted.notna().sum()
+        # If more than 90% can be converted to numeric
+        return valid_conversions / len(sample) > 0.9
+    except:
+        return False
 
 
 def clean_text_column(df: pd.DataFrame, column: str, operations: List[str]) -> pd.DataFrame:
@@ -478,22 +645,49 @@ def clean_text_column(df: pd.DataFrame, column: str, operations: List[str]) -> p
         >>> cleaned_df = clean_text_column(df, 'text', ['lowercase', 'trim_whitespace'])
         >>> print(cleaned_df['text'].tolist())  # ['hello world', 'goodbye']
         
-    TODO: Implement text cleaning operations:
-          - Validate column exists and contains strings
-          - Validate operations list
-          - Implement each cleaning operation:
-            * lowercase: Convert to lowercase
-            * uppercase: Convert to uppercase
-            * title_case: Convert to title case
-            * trim_whitespace: Remove leading/trailing spaces
-            * remove_special_chars: Remove non-alphanumeric characters
-            * remove_extra_spaces: Collapse multiple spaces to single
-            * standardize_quotes: Convert quotes to standard format
-          - Apply operations in specified order
-          - Handle null values appropriately
     """
-    # TODO: Implement text cleaning operations
-    pass
+    # Validate inputs
+    if column not in df.columns:
+        raise KeyError(f"Column '{column}' not found in dataframe")
+    
+    # Validate operations
+    valid_operations = set(TEXT_CLEANING_OPERATIONS)
+    invalid_ops = set(operations) - valid_operations
+    if invalid_ops:
+        raise ValueError(f"Invalid operations: {invalid_ops}. Valid operations: {valid_operations}")
+    
+    df_cleaned = df.copy()
+    
+    # Apply operations in the specified order
+    for operation in operations:
+        # Skip null values in all operations
+        mask = df_cleaned[column].notna()
+        
+        if operation == 'lowercase':
+            df_cleaned.loc[mask, column] = df_cleaned.loc[mask, column].str.lower()
+            
+        elif operation == 'uppercase':
+            df_cleaned.loc[mask, column] = df_cleaned.loc[mask, column].str.upper()
+            
+        elif operation == 'title_case':
+            df_cleaned.loc[mask, column] = df_cleaned.loc[mask, column].str.title()
+            
+        elif operation == 'trim_whitespace':
+            df_cleaned.loc[mask, column] = df_cleaned.loc[mask, column].str.strip()
+            
+        elif operation == 'remove_special_chars':
+            # Keep only alphanumeric characters and spaces
+            df_cleaned.loc[mask, column] = df_cleaned.loc[mask, column].str.replace(r'[^a-zA-Z0-9\s]', '', regex=True)
+            
+        elif operation == 'remove_extra_spaces':
+            # Replace multiple consecutive spaces with single space
+            df_cleaned.loc[mask, column] = df_cleaned.loc[mask, column].str.replace(r'\s+', ' ', regex=True)
+            
+        elif operation == 'standardize_quotes':
+            # Replace various quote types with standard double quotes
+            df_cleaned.loc[mask, column] = df_cleaned.loc[mask, column].str.replace(r'[""''`´]', '"', regex=True)
+    
+    return df_cleaned
 
 
 def standardize_column_names(df: pd.DataFrame) -> pd.DataFrame:
@@ -514,17 +708,59 @@ def standardize_column_names(df: pd.DataFrame) -> pd.DataFrame:
         >>> standardized_df = standardize_column_names(df)
         >>> print(standardized_df.columns.tolist())  # ['column_name', 'another_col']
         
-    TODO: Implement column name standardization:
-          - Convert to lowercase
-          - Replace spaces with underscores
-          - Remove special characters (keep alphanumeric and underscore)
-          - Handle duplicate names after standardization
-          - Trim whitespace
-          - Ensure names start with letter or underscore
-          - Handle edge cases (empty names, numeric-only names)
     """
-    # TODO: Implement column name standardization
-    pass
+    df_standardized = df.copy()
+    new_columns = []
+    
+    for original_name in df.columns:
+        # Convert to string if not already
+        name = str(original_name)
+        
+        # Trim whitespace
+        name = name.strip()
+        
+        # Convert to lowercase
+        name = name.lower()
+        
+        # Replace spaces and other separators with underscores
+        name = re.sub(r'[\s\-\.]+', '_', name)
+        
+        # Remove special characters (keep only alphanumeric and underscore)
+        name = re.sub(r'[^a-z0-9_]', '', name)
+        
+        # Remove multiple consecutive underscores
+        name = re.sub(r'_+', '_', name)
+        
+        # Remove leading/trailing underscores
+        name = name.strip('_')
+        
+        # Ensure name starts with letter or underscore (not number)
+        if name and name[0].isdigit():
+            name = 'col_' + name
+            
+        # Handle empty names
+        if not name:
+            name = f'unnamed_column_{len(new_columns)}'
+            
+        new_columns.append(name)
+    
+    # Handle duplicate names
+    final_columns = []
+    name_counts = {}
+    
+    for name in new_columns:
+        if name in name_counts:
+            name_counts[name] += 1
+            final_name = f"{name}_{name_counts[name]}"
+        else:
+            name_counts[name] = 0
+            final_name = name
+        final_columns.append(final_name)
+    
+    # Apply new column names
+    df_standardized.columns = final_columns
+    
+    return df_standardized
 
 
 def apply_cleaning_pipeline(df: pd.DataFrame, pipeline: List[Dict[str, Any]]) -> pd.DataFrame:
@@ -554,17 +790,90 @@ def apply_cleaning_pipeline(df: pd.DataFrame, pipeline: List[Dict[str, Any]]) ->
         ... ]
         >>> cleaned_df = apply_cleaning_pipeline(df, pipeline)
         
-    TODO: Implement pipeline execution:
-          - Validate pipeline structure and operations
-          - Execute operations in sequence
-          - Handle operation-specific parameters
-          - Implement error handling and rollback
-          - Track applied operations for logging
-          - Support conditional operations
-          - Validate intermediate results
     """
-    # TODO: Implement cleaning pipeline execution
-    pass
+    if not pipeline:
+        return df.copy()
+    
+    # Define available operations mapping
+    operation_map = {
+        'handle_missing_numeric': handle_missing_numeric,
+        'handle_missing_categorical': handle_missing_categorical,
+        'remove_outliers_iqr': remove_outliers_iqr,
+        'cap_outliers': cap_outliers,
+        'remove_duplicates': remove_duplicates,
+        'optimize_dtypes': optimize_dtypes,
+        'clean_text_column': clean_text_column,
+        'standardize_column_names': standardize_column_names,
+    }
+    
+    current_df = df.copy()
+    applied_operations = []
+    
+    try:
+        for i, operation_config in enumerate(pipeline):
+            # Validate operation structure
+            if not isinstance(operation_config, dict):
+                raise ValueError(f"Operation {i} must be a dictionary")
+            
+            if 'operation' not in operation_config:
+                raise ValueError(f"Operation {i} missing 'operation' key")
+            
+            operation_name = operation_config['operation']
+            
+            # Check if operation is supported
+            if operation_name not in operation_map:
+                raise ValueError(f"Unsupported operation: {operation_name}. Available: {list(operation_map.keys())}")
+            
+            operation_func = operation_map[operation_name]
+            
+            # Prepare parameters
+            parameters = operation_config.get('parameters', {})
+            column = operation_config.get('column')
+            
+            # Execute operation based on its signature
+            try:
+                if operation_name in ['handle_missing_numeric', 'handle_missing_categorical', 
+                                    'remove_outliers_iqr', 'cap_outliers', 'clean_text_column']:
+                    # Operations that require a column
+                    if not column:
+                        raise ValueError(f"Operation {operation_name} requires a 'column' parameter")
+                    current_df = operation_func(current_df, column, **parameters)
+                    
+                elif operation_name == 'remove_duplicates':
+                    # Handle subset parameter specially
+                    subset = parameters.get('subset')
+                    keep = parameters.get('keep', 'first')
+                    current_df = operation_func(current_df, subset, keep)
+                    
+                else:
+                    # Operations that work on the entire dataframe
+                    current_df = operation_func(current_df, **parameters)
+                
+                # Record successful operation
+                applied_operations.append({
+                    'operation': operation_name,
+                    'column': column,
+                    'parameters': parameters,
+                    'status': 'success'
+                })
+                
+            except Exception as op_error:
+                # Record failed operation
+                applied_operations.append({
+                    'operation': operation_name,
+                    'column': column,
+                    'parameters': parameters,
+                    'status': 'failed',
+                    'error': str(op_error)
+                })
+                raise ValueError(f"Operation {operation_name} failed: {str(op_error)}")
+    
+    except Exception as pipeline_error:
+        # If any operation fails, you could implement rollback here
+        # For now, we'll raise the error with context
+        raise ValueError(f"Pipeline execution failed at operation {len(applied_operations)}: {str(pipeline_error)}")
+    
+    return current_df
 
 
 def preview_cleaning_operation(df: pd.DataFrame, operation: Dict[str, Any]) -> pd.DataFrame:
@@ -596,14 +905,23 @@ def preview_cleaning_operation(df: pd.DataFrame, operation: Dict[str, Any]) -> p
         >>> preview_df = preview_cleaning_operation(df, operation)
         >>> print(f"Before: {df['age'].isna().sum()}, After: {preview_df['age'].isna().sum()}")
         
-    TODO: Implement operation preview:
-          - Create copy of dataframe
-          - Validate operation parameters
-          - Apply single operation
-          - Return modified copy
-          - Handle errors gracefully
-          - Provide before/after statistics
-          - Support all cleaning operations
     """
-    # TODO: Implement cleaning operation preview
-    pass
+    # Use the pipeline execution with a single operation
+    try:
+        # Validate operation structure
+        if not isinstance(operation, dict):
+            raise ValueError("Operation must be a dictionary")
+        
+        if 'operation' not in operation:
+            raise ValueError("Operation missing 'operation' key")
+        
+        # Create a single-operation pipeline
+        preview_pipeline = [operation]
+        
+        # Apply the pipeline to a copy of the dataframe
+        preview_df = apply_cleaning_pipeline(df, preview_pipeline)
+        
+        return preview_df
+        
+    except Exception as e:
+        raise ValueError(f"Preview operation failed: {str(e)}")

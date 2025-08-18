@@ -54,7 +54,7 @@ def main() -> None:
             render_data_preview()
             
             # Main tabs with state persistence
-            tab_names = ["📊 Analysis", "🧹 Cleaning", "📈 Visualizations", "📤 Export"]
+            tab_names = ["📊 Analysis", "🧹 Cleaning", "📈 Visualizations", "📤 Export","📲 QR Code"]
             
             # Use session state to track active tab
             current_tab_index = st.session_state.get('active_main_tab', 0)
@@ -105,3 +105,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

@@ -54,19 +54,27 @@ def main() -> None:
             render_data_preview()
             
             # Main tabs with state persistence
-            tab_names = ["📊 Analysis", "🧹 Cleaning", "📈 Visualizations", "📤 Export","📲 QR Code"]
+            tab_names = ["📊 Analysis", "🧹 Cleaning", "📈 Visualizations", "📤 Export"]
             
             # Use session state to track active tab
+            current_tab_index = st.session_state.get('active_main_tab', 0)
+            
+            # Ensure the index is within bounds
+            if current_tab_index >= len(tab_names):
+                current_tab_index = 0
+                st.session_state.active_main_tab = 0
+            
             selected_tab = st.selectbox(
                 "Select Section:", 
                 options=tab_names,
-                index=st.session_state.active_main_tab,
+                index=current_tab_index,
                 key="main_tab_selector"
             )
             
             # Update session state when tab changes
-            if selected_tab != tab_names[st.session_state.active_main_tab]:
-                st.session_state.active_main_tab = tab_names.index(selected_tab)
+            new_tab_index = tab_names.index(selected_tab)
+            if new_tab_index != st.session_state.get('active_main_tab', 0):
+                st.session_state.active_main_tab = new_tab_index
             
             # Add some styling separation
             st.markdown("---")
@@ -97,4 +105,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

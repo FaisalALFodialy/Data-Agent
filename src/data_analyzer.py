@@ -93,29 +93,48 @@ class DataAnalyzer:
         rows = []
         for col in num_df.columns:
             s = num_df[col].dropna()
-            if s.empty: rows.append((col, 0, 0.0)); continue
+            if s.empty: 
+                rows.append((col, 0, 0.0, []))
+                continue
             q1, q3 = s.quantile(0.25), s.quantile(0.75)
             iqr = q3 - q1
             lower, upper = q1 - 1.5*iqr, q3 + 1.5*iqr
-            mask = (num_df[col] < lower) | (num_df[col] > upper)
-            cnt = int(mask.sum()); pct = round(cnt / max(len(s),1) * 100, 4)
-            rows.append((col, cnt, pct))
-        return pd.DataFrame(rows, columns=["column","outliers_iqr","outliers_iqr_pct"])
+            
+            #Apply mask to cleaned data (s) instead of original data with NaN
+            outliers = s[(s < lower) | (s > upper)]
+            cnt = len(outliers)
+            pct = round(cnt / max(len(s), 1) * 100, 4)
+            
+            # Store outlier values for verification (limit to first 100 for performance)
+            outlier_values = outliers.head(100).tolist() if cnt > 0 else []
+            
+            rows.append((col, cnt, pct, outlier_values))
+        return pd.DataFrame(rows, columns=["column","outliers_iqr","outliers_iqr_pct", "outlier_values"])
 
     def detect_outliers_zscore(self, threshold: float = 3.0) -> pd.DataFrame:
         num_df = self.df.select_dtypes(include=np.number)
         rows = []
         for col in num_df.columns:
             s = num_df[col].dropna()
-            if s.empty: rows.append((col, 0, 0.0)); continue
+            if s.empty: 
+                rows.append((col, 0, 0.0, []))
+                continue
             mean, std = s.mean(), s.std(ddof=0)
             if std == 0 or np.isnan(std):
-                rows.append((col, 0, 0.0)); continue
-            z = (num_df[col] - mean) / std
-            mask = z.abs() >= threshold
-            cnt = int(mask.sum()); pct = round(cnt / max(len(s),1) * 100, 4)
-            rows.append((col, cnt, pct))
-        return pd.DataFrame(rows, columns=["column","outliers_z","outliers_z_pct"])
+                rows.append((col, 0, 0.0, []))
+                continue
+                
+            # Apply Z-score calculation to cleaned data (s) instead of original data with NaN
+            z_scores = (s - mean) / std
+            outliers = s[z_scores.abs() >= threshold]
+            cnt = len(outliers)
+            pct = round(cnt / max(len(s), 1) * 100, 4)
+            
+            # Store outlier values for verification (limit to first 100 for performance)
+            outlier_values = outliers.head(100).tolist() if cnt > 0 else []
+            
+            rows.append((col, cnt, pct, outlier_values))
+        return pd.DataFrame(rows, columns=["column","outliers_z","outliers_z_pct", "outlier_values"])
 
     def calculate_skewness_kurtosis(self) -> pd.DataFrame:
         num_df = self.df.select_dtypes(include=np.number)
@@ -213,6 +232,93 @@ class DataAnalyzer:
             return {"per_column": {}}
         std_devs = self.df[numeric_cols].std().to_dict()
         return {"per_column": std_devs}
+
+    def verify_outlier_detection(self, column: str, expected_outlier_value: float = None) -> dict:
+        """
+        Verify outlier detection results for a specific column.
+        
+        This function provides detailed verification of outlier detection
+        to ensure the algorithm is working correctly.
+        
+        Args:
+            column: Column name to verify
+            expected_outlier_value: Optional specific value expected to be an outlier
+            
+        Returns:
+            Dict containing verification results and statistics
+        """
+        if column not in self.df.columns:
+            return {"error": f"Column '{column}' not found in dataset"}
+        
+        if not pd.api.types.is_numeric_dtype(self.df[column]):
+            return {"error": f"Column '{column}' is not numeric"}
+        
+        # Get clean data (no NaN values)
+        clean_data = self.df[column].dropna()
+        if clean_data.empty:
+            return {"error": f"Column '{column}' has no non-null values"}
+        
+        # Manual IQR calculation for verification
+        q1 = clean_data.quantile(0.25)
+        q3 = clean_data.quantile(0.75)
+        iqr = q3 - q1
+        lower_fence = q1 - 1.5 * iqr
+        upper_fence = q3 + 1.5 * iqr
+        
+        # Find outliers manually
+        manual_outliers = clean_data[(clean_data < lower_fence) | (clean_data > upper_fence)]
+        manual_count = len(manual_outliers)
+        
+        # Get results from our detection algorithm
+        outlier_results = self.detect_outliers_iqr()
+        algo_result = outlier_results[outlier_results['column'] == column]
+        
+        if algo_result.empty:
+            return {"error": f"No outlier detection results found for column '{column}'"}
+        
+        algo_count = int(algo_result.iloc[0]['outliers_iqr'])
+        algo_percentage = float(algo_result.iloc[0]['outliers_iqr_pct'])
+        algo_values = algo_result.iloc[0]['outlier_values']
+        
+        # Verification results
+        verification = {
+            "column": column,
+            "total_non_null_values": len(clean_data),
+            "statistics": {
+                "q1": float(q1),
+                "q3": float(q3),
+                "iqr": float(iqr),
+                "lower_fence": float(lower_fence),
+                "upper_fence": float(upper_fence)
+            },
+            "manual_calculation": {
+                "outlier_count": manual_count,
+                "outlier_percentage": round(manual_count / len(clean_data) * 100, 4),
+                "sample_outliers": manual_outliers.head(10).tolist()
+            },
+            "algorithm_results": {
+                "outlier_count": algo_count,
+                "outlier_percentage": algo_percentage,
+                "sample_outliers": algo_values[:10] if algo_values else []
+            },
+            "verification": {
+                "counts_match": manual_count == algo_count,
+                "percentage_match": abs(round(manual_count / len(clean_data) * 100, 4) - algo_percentage) < 0.01
+            }
+        }
+        
+        # Check specific value if provided
+        if expected_outlier_value is not None:
+            is_outlier_manual = (expected_outlier_value < lower_fence) or (expected_outlier_value > upper_fence)
+            is_in_results = expected_outlier_value in manual_outliers.values
+            verification["specific_value_check"] = {
+                "value": expected_outlier_value,
+                "should_be_outlier": is_outlier_manual,
+                "found_in_results": is_in_results,
+                "verification_passed": is_outlier_manual == is_in_results
+            }
+        
+        return verification
 
 
 

@@ -580,7 +580,6 @@ def render_welcome_screen() -> None:
     """Render welcome screen when no data is loaded."""
     st.markdown("""
     <div style="text-align: center; padding: 2rem;">
-        <h2>Welcome to the Byan Data Analysis & Cleaning Tool</h2>
         <p style="font-size: 1.2rem; color: #666;">Your comprehensive solution for data quality assessment and cleaning with AI insights</p>
     </div>
     """, unsafe_allow_html=True)
